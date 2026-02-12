@@ -3,12 +3,28 @@ let loadedCount = 0;
 let failed = [];
 let items = [];
 
-// ====== 参数 ======
-const FIXED_SIZE = 180;
+// ====== 自适应参数（随屏幕变化） ======
+const SIZE_RATIO = 0.18; // 图形尺寸 = 短边 * 比例（推荐 0.14~0.22）
+const SPEED_RATIO = 0.012; // 初始速度 = 短边 * 比例（推荐 0.008~0.02）
+const MAXS_RATIO = 0.03; // 最大速度 = 短边 * 比例（推荐 0.02~0.05）
+
+function responsiveSize() {
+  // 可选：限制极端大小
+  return Math.round(constrain(Math.min(width, height) * SIZE_RATIO, 90, 260));
+}
+function responsiveSpeedBase() {
+  return Math.max(1.2, Math.min(width, height) * SPEED_RATIO);
+}
+function responsiveMaxSpeed() {
+  return Math.max(3.0, Math.min(width, height) * MAXS_RATIO);
+}
+
+// ====== 物理参数 ======
 const RESTITUTION_OBJ = 0.98;
 const RESTITUTION_WALL = 0.98;
-const EXTRA_SEPARATION = 1.0;
-const MAX_SPEED = 6.0;
+
+// ✅ 间隙（你之前要小一点）
+const EXTRA_SEPARATION = 0.2;
 
 // 陀螺：恒定转，只有碰撞才减速
 const SPIN_START_MIN = 0.18;
@@ -67,12 +83,11 @@ function draw() {
     it.clampSpeed();
   }
 
-  // ✅ 拖动时：直接把目标跟随鼠标（仍保持旋转）
+  // 拖动：跟随鼠标（仍旋转）
   if (dragging) {
     dragging.x = mouseX + dragOffX;
     dragging.y = mouseY + dragOffY;
 
-    // 估算甩动速度（像惯性一样丢出去）
     dragVx = mouseX - prevMouseX;
     dragVy = mouseY - prevMouseY;
     prevMouseX = mouseX;
@@ -93,19 +108,22 @@ function draw() {
   noStroke();
   fill(255);
   textSize(14);
-  text("点击生成；拖动图形；碰撞/撞墙反弹（旋转只在碰撞时减速）", 20, 30);
-  text("数量: " + items.length, 20, 50);
+  text(
+    "Puoi cliccare per generare la forma del trottola e trascinare la figura per spostarla.",
+    20,
+    30,
+  );
+  text("numero: " + items.length, 20, 50);
 }
 
 function mousePressed() {
-  // 1) 优先：如果按到某个图形，就进入拖动
+  // 优先选择拖动
   const hit = pickTopmost(mouseX, mouseY);
   if (hit) {
     dragging = hit;
     dragOffX = dragging.x - mouseX;
     dragOffY = dragging.y - mouseY;
 
-    // 拖动开始：速度归零，避免抖动（旋转仍然保留）
     dragging.vx = 0;
     dragging.vy = 0;
 
@@ -116,24 +134,32 @@ function mousePressed() {
     return;
   }
 
-  // 2) 否则：生成一个新图形
+  // 否则生成
   const okImgs = svgImgs.filter(Boolean);
   if (okImgs.length === 0) return;
+
   const img = random(okImgs);
   items.push(new SpinnerSVG(mouseX, mouseY, img));
 }
 
 function mouseReleased() {
-  // 松手：把甩动速度给回去
   if (dragging) {
-    dragging.vx = constrain(dragVx, -MAX_SPEED, MAX_SPEED);
-    dragging.vy = constrain(dragVy, -MAX_SPEED, MAX_SPEED);
+    const ms = responsiveMaxSpeed();
+    dragging.vx = constrain(dragVx, -ms, ms);
+    dragging.vy = constrain(dragVy, -ms, ms);
     dragging = null;
   }
 }
 
 function windowResized() {
   resizeCanvas(window.innerWidth, window.innerHeight);
+
+  // ✅ 尺寸随屏幕变化更新
+  const newSize = responsiveSize();
+  for (const it of items) {
+    it.size = newSize;
+    it.r = newSize * 0.5;
+  }
 }
 
 // ------------------ UI ------------------
@@ -164,11 +190,12 @@ class SpinnerSVG {
     this.y = y;
     this.img = img;
 
-    this.size = FIXED_SIZE;
+    this.size = responsiveSize();
     this.r = this.size * 0.5;
 
-    this.vx = random(-3.2, 3.2);
-    this.vy = random(-2.8, 2.8);
+    const base = responsiveSpeedBase();
+    this.vx = random(-base, base);
+    this.vy = random(-base, base);
 
     this.a = random(TWO_PI);
     const w0 = random(SPIN_START_MIN, SPIN_START_MAX);
@@ -178,9 +205,8 @@ class SpinnerSVG {
   }
 
   update() {
-    // ✅ 拖动时：位置由鼠标控制，不做位移积分（避免打架）
     if (this === dragging) {
-      this.a += this.w; // 仍然旋转
+      this.a += this.w;
       if (this.spinLossCooldown > 0) this.spinLossCooldown--;
       return;
     }
@@ -193,36 +219,39 @@ class SpinnerSVG {
   }
 
   bounceWalls() {
-    // 拖动中不做撞墙反弹（否则鼠标拖不动）
     if (this === dragging) return;
+
+    const e = RESTITUTION_WALL;
 
     if (this.x - this.r < 0) {
       this.x = this.r;
-      this.vx = Math.abs(this.vx) * RESTITUTION_WALL;
+      this.vx = Math.abs(this.vx) * e;
       this.applySpinLossOnce();
     }
     if (this.x + this.r > width) {
       this.x = width - this.r;
-      this.vx = -Math.abs(this.vx) * RESTITUTION_WALL;
+      this.vx = -Math.abs(this.vx) * e;
       this.applySpinLossOnce();
     }
     if (this.y - this.r < 0) {
       this.y = this.r;
-      this.vy = Math.abs(this.vy) * RESTITUTION_WALL;
+      this.vy = Math.abs(this.vy) * e;
       this.applySpinLossOnce();
     }
     if (this.y + this.r > height) {
       this.y = height - this.r;
-      this.vy = -Math.abs(this.vy) * RESTITUTION_WALL;
+      this.vy = -Math.abs(this.vy) * e;
       this.applySpinLossOnce();
     }
   }
 
   clampSpeed() {
     if (this === dragging) return;
+
+    const ms = responsiveMaxSpeed();
     const sp = Math.hypot(this.vx, this.vy);
-    if (sp > MAX_SPEED) {
-      const k = MAX_SPEED / sp;
+    if (sp > ms) {
+      const k = ms / sp;
       this.vx *= k;
       this.vy *= k;
     }
@@ -251,7 +280,6 @@ class SpinnerSVG {
 }
 
 // ------------------ Picking ------------------
-// 选中“最上层”的（数组末尾当作最上层），命中用圆形近似
 function pickTopmost(mx, my) {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
@@ -262,10 +290,8 @@ function pickTopmost(mx, my) {
   return null;
 }
 
-// ------------------ Collision (Circle Approx) ------------------
+// ------------------ Collision ------------------
 function resolveCircleCollision(A, B) {
-  // 拖动中的物体仍然可以被撞开，但为了稳定：
-  // 让拖动对象“更强势”，只推动另一方更自然
   const AisDrag = A === dragging;
   const BisDrag = B === dragging;
 
@@ -283,7 +309,7 @@ function resolveCircleCollision(A, B) {
 
     const overlap = minDist - dist + EXTRA_SEPARATION;
 
-    // 分离：若其中一个在拖动，则主要推开另一个
+    // 分离：拖动对象更“强势”
     if (AisDrag && !BisDrag) {
       B.x += nx * overlap;
       B.y += ny * overlap;
@@ -297,7 +323,7 @@ function resolveCircleCollision(A, B) {
       B.y += ny * overlap * 0.5;
     }
 
-    // 冲量反弹（拖动的物体不参与速度积分，只改变另一方的速度更稳定）
+    // 冲量反弹
     const rvx = B.vx - A.vx;
     const rvy = B.vy - A.vy;
     const velAlongN = rvx * nx + rvy * ny;
@@ -308,12 +334,13 @@ function resolveCircleCollision(A, B) {
       return;
     }
 
-    const j = (-(1 + RESTITUTION_OBJ) * velAlongN) / 2;
+    const e = RESTITUTION_OBJ;
+    const j = (-(1 + e) * velAlongN) / 2;
     const ix = j * nx;
     const iy = j * ny;
 
     if (AisDrag && !BisDrag) {
-      B.vx += ix * 2; // A 不动，把冲量全给 B
+      B.vx += ix * 2;
       B.vy += iy * 2;
     } else if (!AisDrag && BisDrag) {
       A.vx -= ix * 2;
