@@ -3,13 +3,12 @@ let loadedCount = 0;
 let failed = [];
 let items = [];
 
-// ====== 自适应参数（随屏幕变化） ======
-const SIZE_RATIO = 0.18; // 图形尺寸 = 短边 * 比例（推荐 0.14~0.22）
-const SPEED_RATIO = 0.012; // 初始速度 = 短边 * 比例（推荐 0.008~0.02）
-const MAXS_RATIO = 0.03; // 最大速度 = 短边 * 比例（推荐 0.02~0.05）
+// ====== 自适应（随屏幕变化）======
+const SIZE_RATIO = 0.18;
+const SPEED_RATIO = 0.012;
+const MAXS_RATIO = 0.03;
 
 function responsiveSize() {
-  // 可选：限制极端大小
   return Math.round(constrain(Math.min(width, height) * SIZE_RATIO, 90, 260));
 }
 function responsiveSpeedBase() {
@@ -19,26 +18,24 @@ function responsiveMaxSpeed() {
   return Math.max(3.0, Math.min(width, height) * MAXS_RATIO);
 }
 
-// ====== 物理参数 ======
+// ====== 反弹/间隙 ======
 const RESTITUTION_OBJ = 0.98;
 const RESTITUTION_WALL = 0.98;
-
-// ✅ 间隙（你之前要小一点）
 const EXTRA_SEPARATION = 0.2;
 
-// 陀螺：恒定转，只有碰撞才减速
+// ====== 陀螺旋转（恒定转，只有碰撞才减速）======
 const SPIN_START_MIN = 0.18;
 const SPIN_START_MAX = 0.28;
 const COLLISION_SPIN_LOSS = 0.94;
 const MIN_SPIN = 0.06;
 const SPIN_LOSS_COOLDOWN_FRAMES = 8;
 
-// ====== 拖拽相关 ======
+// ====== 拖拽（鼠标 + 触摸）======
 let dragging = null;
 let dragOffX = 0;
 let dragOffY = 0;
-let prevMouseX = 0;
-let prevMouseY = 0;
+let prevPX = 0;
+let prevPY = 0;
 let dragVx = 0;
 let dragVy = 0;
 
@@ -66,121 +63,114 @@ function setup() {
 function draw() {
   background(0);
 
-  if (loadedCount < 6) {
-    drawLoading();
-    return;
-  }
-  const okImgs = svgImgs.filter(Boolean);
-  if (okImgs.length === 0) {
-    drawAllFailed();
-    return;
-  }
+  if (loadedCount < 6) return;
 
-  // 更新 + 撞墙反弹
+  const okImgs = svgImgs.filter(Boolean);
+  if (okImgs.length === 0) return;
+
   for (const it of items) {
     it.update();
     it.bounceWalls();
     it.clampSpeed();
   }
 
-  // 拖动：跟随鼠标（仍旋转）
   if (dragging) {
-    dragging.x = mouseX + dragOffX;
-    dragging.y = mouseY + dragOffY;
+    const x = pointerX();
+    const y = pointerY();
 
-    dragVx = mouseX - prevMouseX;
-    dragVy = mouseY - prevMouseY;
-    prevMouseX = mouseX;
-    prevMouseY = mouseY;
+    dragging.x = x + dragOffX;
+    dragging.y = y + dragOffY;
+
+    dragVx = x - prevPX;
+    dragVy = y - prevPY;
+    prevPX = x;
+    prevPY = y;
   }
 
-  // 物体-物体碰撞
   for (let i = 0; i < items.length; i++) {
     for (let j = i + 1; j < items.length; j++) {
       resolveCircleCollision(items[i], items[j]);
     }
   }
 
-  // 绘制
   for (const it of items) it.draw();
-
-  // UI（可删）
-  noStroke();
-  fill(255);
-  textSize(14);
-  text(
-    "Puoi cliccare per generare la forma del trottola e trascinare la figura per spostarla.",
-    20,
-    30,
-  );
-  text("numero: " + items.length, 20, 50);
 }
 
-function mousePressed() {
-  // 优先选择拖动
-  const hit = pickTopmost(mouseX, mouseY);
+// ========== 指针坐标（鼠标/触摸）==========
+function pointerX() {
+  return touches && touches.length > 0 ? touches[0].x : mouseX;
+}
+function pointerY() {
+  return touches && touches.length > 0 ? touches[0].y : mouseY;
+}
+
+function startPointerAction() {
+  const x = pointerX();
+  const y = pointerY();
+
+  const hit = pickTopmost(x, y);
   if (hit) {
     dragging = hit;
-    dragOffX = dragging.x - mouseX;
-    dragOffY = dragging.y - mouseY;
+    dragOffX = dragging.x - x;
+    dragOffY = dragging.y - y;
 
     dragging.vx = 0;
     dragging.vy = 0;
 
-    prevMouseX = mouseX;
-    prevMouseY = mouseY;
+    prevPX = x;
+    prevPY = y;
     dragVx = 0;
     dragVy = 0;
     return;
   }
 
-  // 否则生成
   const okImgs = svgImgs.filter(Boolean);
   if (okImgs.length === 0) return;
 
   const img = random(okImgs);
-  items.push(new SpinnerSVG(mouseX, mouseY, img));
+  items.push(new SpinnerSVG(x, y, img));
 }
 
+function endPointerAction() {
+  if (!dragging) return;
+
+  const ms = responsiveMaxSpeed();
+  dragging.vx = constrain(dragVx, -ms, ms);
+  dragging.vy = constrain(dragVy, -ms, ms);
+  dragging = null;
+}
+
+// --- 鼠标 ---
+function mousePressed() {
+  if (touches && touches.length > 0) return;
+  startPointerAction();
+}
 function mouseReleased() {
-  if (dragging) {
-    const ms = responsiveMaxSpeed();
-    dragging.vx = constrain(dragVx, -ms, ms);
-    dragging.vy = constrain(dragVy, -ms, ms);
-    dragging = null;
-  }
+  if (touches && touches.length > 0) return;
+  endPointerAction();
+}
+
+// --- 触摸 ---
+function touchStarted() {
+  startPointerAction();
+  return false;
+}
+function touchMoved() {
+  return false;
+}
+function touchEnded() {
+  endPointerAction();
+  return false;
 }
 
 function windowResized() {
   resizeCanvas(window.innerWidth, window.innerHeight);
 
-  // ✅ 尺寸随屏幕变化更新
   const newSize = responsiveSize();
   for (const it of items) {
     it.size = newSize;
     it.r = newSize * 0.5;
   }
-}
-
-// ------------------ UI ------------------
-function drawLoading() {
-  noStroke();
-  fill(255);
-  textSize(16);
-  text(`Loading... ${loadedCount}/6`, 20, 30);
-  if (failed.length > 0) {
-    textSize(12);
-    text(`加载失败: ${failed.join(", ")}`, 20, 52);
-  }
-}
-
-function drawAllFailed() {
-  noStroke();
-  fill(255);
-  textSize(16);
-  text("SVG 全部加载失败：请检查 assets 路径和 Live Server。", 20, 30);
-  textSize(12);
-  text(`失败列表: ${failed.join(", ")}`, 20, 52);
 }
 
 // ------------------ Object ------------------
@@ -309,7 +299,6 @@ function resolveCircleCollision(A, B) {
 
     const overlap = minDist - dist + EXTRA_SEPARATION;
 
-    // 分离：拖动对象更“强势”
     if (AisDrag && !BisDrag) {
       B.x += nx * overlap;
       B.y += ny * overlap;
@@ -323,7 +312,6 @@ function resolveCircleCollision(A, B) {
       B.y += ny * overlap * 0.5;
     }
 
-    // 冲量反弹
     const rvx = B.vx - A.vx;
     const rvy = B.vy - A.vy;
     const velAlongN = rvx * nx + rvy * ny;
